@@ -71,7 +71,7 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 15;
+const BEAM_WIDTH: usize = 13;
 const TURN_STRIDE: usize = 2;
 
 #[derive(Debug, Clone)]
@@ -143,7 +143,12 @@ impl State {
         for &(col, coef) in &cols {
             if let Some(enemy) = self.enemies.get(enemy_collection, col) {
                 let ratio = self.enemies.damages[col] as f64 / enemy.hp as f64;
-                let coef = coef * ratio * ratio * 0.7;
+
+                if ratio == 0.0 {
+                    continue;
+                }
+
+                let coef = coef * ratio * ratio;
                 raw_score_point += enemy.hp as f64 * coef;
                 power_point += enemy.power as f64 * coef;
             }
@@ -294,7 +299,7 @@ fn main() {
         let simulation_len = DEFAULT_SIMULATION_LEN.min(MAX_TURN - turn);
 
         for iter in 0..simulation_len {
-            let mut next_states = vec![vec![]; WIDTH];
+            let mut next_states = vec![Vec::with_capacity(BEAM_WIDTH * 3); WIDTH];
 
             for &i in current_states.iter().flatten() {
                 all_states[i].0.clean_up(&enemy_collection);
