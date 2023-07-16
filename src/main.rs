@@ -64,14 +64,14 @@ impl<T: PartialOrd> ChangeMinMax for T {
 }
 
 const MAX_TURN: usize = 1000;
-const DEFAULT_SIMULATION_LEN: usize = 25;
+const DEFAULT_SIMULATION_LEN: usize = 30;
 const HEIGHT: usize = 60;
 const WIDTH: usize = 25;
 const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 10;
+const BEAM_WIDTH: usize = 8;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -113,9 +113,12 @@ impl State {
         }
     }
 
+    fn clean_up(&mut self, enemy_collection: &EnemyCollection) {
+        self.enemies.clean_up_enemies(enemy_collection, self.turn);
+    }
+
     fn progress_turn(&mut self, enemy_collection: &EnemyCollection, direction: usize) -> bool {
         let mut alive = true;
-        self.enemies.clean_up_enemies(enemy_collection, self.turn);
         alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
         self.move_player(direction);
         alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
@@ -276,6 +279,8 @@ fn main() {
             let mut next_states = vec![vec![]; WIDTH];
 
             for &i in current_states.iter().flatten() {
+                all_states[i].0.clean_up(&enemy_collection);
+
                 for &dir in &[L, C, R] {
                     let (state, first_dir) = &all_states[i];
                     let mut state = state.clone();
@@ -319,6 +324,7 @@ fn main() {
         }
 
         write_direction(best_dir);
+        state.clean_up(&enemy_collection);
         state.progress_turn(&enemy_collection, best_dir);
         turn += 1;
 
