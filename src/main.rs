@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, time::Instant};
 
 macro_rules! get {
       ($t:ty) => {
@@ -71,7 +71,7 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 10;
+const BEAM_WIDTH: usize = 20;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -260,6 +260,7 @@ impl EnemyCollection {
 }
 
 fn main() {
+    let since = Instant::now();
     let mut state = State::new();
     let mut enemy_collection = EnemyCollection::new();
     let mut turn = 0;
@@ -321,16 +322,13 @@ fn main() {
         state.progress_turn(&enemy_collection, best_dir);
         turn += 1;
 
-        eprintln!("power: {}", state.power);
-        eprintln!("score: {}", state.raw_score);
-        eprintln!("turn: {}", turn);
-        eprintln!("best_score: {}", best_score);
-        eprintln!("");
-
         if turn == MAX_TURN {
             break;
         }
     }
+
+    eprintln!("final score: {}", state.raw_score);
+    eprintln!("{:.3}s", (Instant::now() - since).as_secs_f64());
 }
 
 fn read_spawns() -> Option<Vec<(u32, u32, usize)>> {
