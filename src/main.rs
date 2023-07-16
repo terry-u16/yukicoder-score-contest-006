@@ -71,7 +71,7 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 8;
+const BEAM_WIDTH: usize = 9;
 
 #[derive(Debug, Clone)]
 struct State {
