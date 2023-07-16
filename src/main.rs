@@ -142,7 +142,7 @@ impl State {
         for &(col, coef) in &cols {
             if let Some(enemy) = self.enemies.get(enemy_collection, col) {
                 let ratio = self.enemies.damages[col] as f64 / enemy.hp as f64;
-                let coef = coef * ratio * ratio * 0.5;
+                let coef = coef * ratio * ratio * 0.7;
                 raw_score_point += enemy.hp as f64 * coef;
                 power_point += enemy.power as f64 * coef;
             }
