@@ -71,7 +71,7 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 9;
+const BEAM_WIDTH: usize = 10;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -223,18 +223,26 @@ impl EnemyState {
     }
 
     fn clean_up_enemies(&mut self, enemies: &EnemyCollection, turn: usize) {
-        for (column, (index, damage)) in self
-            .indices
-            .iter_mut()
-            .zip(self.damages.iter_mut())
-            .enumerate()
-        {
-            if let Some(enemy) = enemies.get(column, *index) {
+        let mut column = 0;
+        let mut flag = enemies.clean_flags[turn];
+
+        while flag > 0 {
+            let tzcnt = flag.trailing_zeros();
+            flag >>= tzcnt;
+            column += tzcnt;
+
+            let index = &mut self.indices[column as usize];
+            let damage = &mut self.damages[column as usize];
+
+            if let Some(enemy) = enemies.get(column as usize, *index) {
                 if enemy.is_out_of_range(turn) {
                     *damage = 0;
                     *index += 1;
                 }
             }
+
+            flag >>= 1;
+            column += 1;
         }
     }
 }
@@ -242,18 +250,27 @@ impl EnemyState {
 #[derive(Debug, Clone)]
 struct EnemyCollection {
     enemies: Vec<Vec<Enemy>>,
+    clean_flags: Vec<u32>,
 }
 
 impl EnemyCollection {
     fn new() -> Self {
         Self {
             enemies: vec![vec![]; WIDTH],
+            clean_flags: vec![0; MAX_TURN],
         }
     }
 
     fn spawn(&mut self, enemies: &[(u32, u32, usize)], turn: usize) {
+        let mut flag = 0;
+
         for &(hp, power, col) in enemies {
             self.enemies[col].push(Enemy::new(hp, power, turn));
+            flag |= 1 << col;
+        }
+
+        if turn + HEIGHT < MAX_TURN {
+            self.clean_flags[turn + HEIGHT] = flag;
         }
     }
 
