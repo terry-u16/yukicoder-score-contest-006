@@ -71,8 +71,8 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 30;
-const TURN_STRIDE: usize = 5;
+const BEAM_WIDTH: usize = 15;
+const TURN_STRIDE: usize = 2;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -288,12 +288,12 @@ fn main() {
 
     while let Some(enemies) = read_spawns() {
         enemy_collection.spawn(&enemies, turn);
-        let mut all_states = vec![(state.clone(), vec![])];
+        let mut all_states = vec![(state.clone(), [C; BEAM_WIDTH])];
         let mut current_states = vec![vec![]; WIDTH];
         current_states[state.column].push(0);
         let simulation_len = DEFAULT_SIMULATION_LEN.min(MAX_TURN - turn);
 
-        for _ in 0..simulation_len {
+        for iter in 0..simulation_len {
             let mut next_states = vec![vec![]; WIDTH];
 
             for &i in current_states.iter().flatten() {
@@ -311,8 +311,8 @@ fn main() {
                     let next_col = state.column;
                     let mut directions = directions.clone();
 
-                    if directions.len() < TURN_STRIDE {
-                        directions.push(dir);
+                    if iter < TURN_STRIDE {
+                        directions[iter] = dir;
                     }
 
                     next_states[next_col].push(all_states.len());
@@ -337,7 +337,7 @@ fn main() {
         }
 
         let mut best_score = std::f64::MIN;
-        let mut best_dir = vec![C; 5];
+        let mut best_dir = [C; BEAM_WIDTH];
 
         for (state, dir) in current_states.iter().flatten().map(|&i| &all_states[i]) {
             if best_score.change_max(state.score) {
