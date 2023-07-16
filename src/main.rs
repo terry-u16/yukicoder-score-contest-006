@@ -77,6 +77,7 @@ struct State {
     column: usize,
     power: u32,
     raw_score: u32,
+    score: f64,
     turn: usize,
     enemies: EnemyState,
 }
@@ -88,6 +89,7 @@ impl State {
             power: 100,
             raw_score: 0,
             turn: 0,
+            score: 0.0,
             enemies: EnemyState::new(),
         }
     }
@@ -117,13 +119,14 @@ impl State {
         self.move_player(direction);
         alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
         self.attack(enemy_collection);
-
         self.turn += 1;
+
+        self.update_score(enemy_collection);
 
         alive
     }
 
-    fn score(&self, enemy_collection: &EnemyCollection) -> f64 {
+    fn update_score(&mut self, enemy_collection: &EnemyCollection) {
         let mut raw_score_point = self.raw_score as f64;
         let mut power_point = self.power as f64;
         let cols = [
@@ -143,7 +146,7 @@ impl State {
 
         let raw_score_coef = self.turn as f64;
         let power_point_coef = (MAX_TURN - self.turn) as f64;
-        raw_score_point * raw_score_coef + power_point * power_point_coef
+        self.score = raw_score_point * raw_score_coef + power_point * power_point_coef;
     }
 }
 
@@ -283,8 +286,8 @@ fn main() {
 
                         if next_states[next_col]
                             .as_ref()
-                            .map_or(std::f64::MIN, |s| s.0.score(&enemy_collection))
-                            < state.score(&enemy_collection)
+                            .map_or(std::f64::MIN, |s| s.0.score)
+                            < state.score
                         {
                             let dir = if iter == 0 { dir } else { *first_dir };
                             next_states[next_col] = Some((state, dir));
@@ -301,21 +304,21 @@ fn main() {
 
         for s in current_states.iter() {
             if let Some((state, dir)) = s {
-                if best_score.change_max(state.score(&enemy_collection)) {
+                if best_score.change_max(state.score) {
                     best_dir = *dir;
                 }
             }
         }
+
+        write_direction(best_dir);
+        state.progress_turn(&enemy_collection, best_dir);
+        turn += 1;
 
         eprintln!("power: {}", state.power);
         eprintln!("score: {}", state.raw_score);
         eprintln!("turn: {}", turn + 1);
         eprintln!("best_score: {}", best_score);
         eprintln!("");
-
-        write_direction(best_dir);
-        state.progress_turn(&enemy_collection, best_dir);
-        turn += 1;
 
         if turn == MAX_TURN {
             break;
