@@ -144,8 +144,8 @@ impl State {
             }
         }
 
-        let raw_score_coef = self.turn as f64;
-        let power_point_coef = (MAX_TURN - self.turn) as f64;
+        let raw_score_coef = (self.turn * self.turn) as f64;
+        let power_point_coef = ((MAX_TURN - self.turn) * MAX_TURN) as f64;
         self.score = raw_score_point * raw_score_coef + power_point * power_point_coef;
     }
 }
@@ -316,7 +316,7 @@ fn main() {
 
         eprintln!("power: {}", state.power);
         eprintln!("score: {}", state.raw_score);
-        eprintln!("turn: {}", turn + 1);
+        eprintln!("turn: {}", turn);
         eprintln!("best_score: {}", best_score);
         eprintln!("");
 
