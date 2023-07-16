@@ -71,7 +71,8 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 10;
+const BEAM_WIDTH: usize = 30;
+const TURN_STRIDE: usize = 5;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -287,19 +288,19 @@ fn main() {
 
     while let Some(enemies) = read_spawns() {
         enemy_collection.spawn(&enemies, turn);
-        let mut all_states = vec![(state.clone(), C)];
+        let mut all_states = vec![(state.clone(), vec![])];
         let mut current_states = vec![vec![]; WIDTH];
         current_states[state.column].push(0);
         let simulation_len = DEFAULT_SIMULATION_LEN.min(MAX_TURN - turn);
 
-        for iter in 0..simulation_len {
+        for _ in 0..simulation_len {
             let mut next_states = vec![vec![]; WIDTH];
 
             for &i in current_states.iter().flatten() {
                 all_states[i].0.clean_up(&enemy_collection);
 
                 for &dir in &[L, C, R] {
-                    let (state, first_dir) = &all_states[i];
+                    let (state, directions) = &all_states[i];
                     let mut state = state.clone();
                     let is_alive = state.progress_turn(&enemy_collection, dir);
 
@@ -308,10 +309,14 @@ fn main() {
                     }
 
                     let next_col = state.column;
-                    let dir = if iter == 0 { dir } else { *first_dir };
+                    let mut directions = directions.clone();
+
+                    if directions.len() < TURN_STRIDE {
+                        directions.push(dir);
+                    }
 
                     next_states[next_col].push(all_states.len());
-                    all_states.push((state, dir));
+                    all_states.push((state, directions));
                 }
             }
 
@@ -332,18 +337,28 @@ fn main() {
         }
 
         let mut best_score = std::f64::MIN;
-        let mut best_dir = C;
+        let mut best_dir = vec![C; 5];
 
         for (state, dir) in current_states.iter().flatten().map(|&i| &all_states[i]) {
             if best_score.change_max(state.score) {
-                best_dir = *dir;
+                best_dir = dir.clone();
             }
         }
 
-        write_direction(best_dir);
+        write_direction(best_dir[0]);
         state.clean_up(&enemy_collection);
-        state.progress_turn(&enemy_collection, best_dir);
+        state.progress_turn(&enemy_collection, best_dir[0]);
         turn += 1;
+
+        for i in 1..TURN_STRIDE {
+            if let Some(enemies) = read_spawns() {
+                enemy_collection.spawn(&enemies, turn);
+                write_direction(best_dir[i]);
+                state.clean_up(&enemy_collection);
+                state.progress_turn(&enemy_collection, best_dir[i]);
+                turn += 1;
+            }
+        }
 
         if turn == MAX_TURN {
             break;
