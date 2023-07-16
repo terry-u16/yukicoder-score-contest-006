@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, io::Write};
+use std::io::Write;
 
 macro_rules! get {
       ($t:ty) => {
@@ -72,14 +72,13 @@ const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct State {
     column: usize,
     power: u32,
     raw_score: u32,
-    board: Vec<u64>,
     turn: usize,
-    enemies: Vec<VecDeque<Enemy>>,
+    enemies: EnemyState,
 }
 
 impl State {
@@ -88,9 +87,8 @@ impl State {
             column: CENTER,
             power: 100,
             raw_score: 0,
-            board: vec![0; WIDTH],
             turn: 0,
-            enemies: vec![VecDeque::new(); WIDTH],
+            enemies: EnemyState::new(),
         }
     }
 
@@ -98,65 +96,34 @@ impl State {
         self.power / 100
     }
 
-    fn move_enemy(&mut self) -> bool {
-        for (i, b) in self.board.iter_mut().enumerate() {
-            if *b & 1 > 0 {
-                self.enemies[i].pop_front();
-            }
-
-            *b >>= 1;
-        }
-
-        !self.is_crash()
-    }
-
-    fn spawn(&mut self, enemies: &[(u32, u32, usize)]) {
-        for &(hp, power, col) in enemies {
-            self.board[col] |= 1 << (HEIGHT - 1);
-            self.enemies[col].push_back(Enemy::new(hp, power));
-        }
-    }
-
-    fn move_player(&mut self, direction: usize) -> bool {
+    fn move_player(&mut self, direction: usize) {
         self.column = (self.column + direction + WIDTH) % WIDTH;
-        !self.is_crash()
     }
 
-    fn attack(&mut self) {
+    fn attack(&mut self, enemy_collection: &EnemyCollection) {
         let level = self.level();
 
-        if let Some(enemy) = self.enemies[self.column].front_mut() {
-            enemy.damage(level);
-
-            if enemy.hp == 0 {
-                self.raw_score += enemy.init_hp;
-                self.power += enemy.power;
-                self.enemies[self.column].pop_front();
-
-                // ビットを下ろす
-                let signed = self.board[self.column] as i64;
-                let lsb = signed & -signed;
-                self.board[self.column] ^= lsb as u64;
-            }
+        if self.enemies.has_enemy(enemy_collection, self.column) {
+            let (hp, power) = self.enemies.damage(enemy_collection, self.column, level);
+            self.raw_score += hp;
+            self.power += power;
         }
     }
 
-    fn progress_turn(&mut self, enemies: &[(u32, u32, usize)], direction: usize) -> bool {
+    fn progress_turn(&mut self, enemy_collection: &EnemyCollection, direction: usize) -> bool {
         let mut alive = true;
-        alive &= self.move_enemy();
-        self.spawn(enemies);
-        alive &= self.move_player(direction);
-        self.attack();
+        self.enemies.clean_up_enemies(enemy_collection, self.turn);
+        alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
+        self.move_player(direction);
+        alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
+        self.attack(enemy_collection);
+
         self.turn += 1;
 
         alive
     }
 
-    fn is_crash(&self) -> bool {
-        (self.board[self.column] & 1) > 0
-    }
-
-    fn score(&self) -> f64 {
+    fn score(&self, enemy_collection: &EnemyCollection) -> f64 {
         let mut raw_score_point = self.raw_score as f64;
         let mut power_point = self.power as f64;
         let cols = [
@@ -166,10 +133,10 @@ impl State {
         ];
 
         for &(col, coef) in &cols {
-            if let Some(enemy) = self.enemies[col].front() {
-                let ratio = (enemy.init_hp - enemy.hp) as f64 / enemy.init_hp as f64;
+            if let Some(enemy) = self.enemies.get(enemy_collection, col) {
+                let ratio = self.enemies.damages[col] as f64 / enemy.hp as f64;
                 let coef = coef * ratio * ratio * 0.5;
-                raw_score_point += enemy.init_hp as f64 * coef;
+                raw_score_point += enemy.hp as f64 * coef;
                 power_point += enemy.power as f64 * coef;
             }
         }
@@ -183,29 +150,118 @@ impl State {
 #[derive(Debug, Clone, Copy, Default)]
 struct Enemy {
     hp: u32,
-    init_hp: u32,
     power: u32,
+    spawn_turn: usize,
 }
 
 impl Enemy {
-    fn new(hp: u32, power: u32) -> Self {
+    fn new(hp: u32, power: u32, spawn_turn: usize) -> Self {
         Self {
             hp,
-            init_hp: hp,
             power,
+            spawn_turn,
         }
     }
 
-    fn damage(&mut self, attack: u32) {
-        self.hp = self.hp.saturating_sub(attack);
+    fn is_out_of_range(&self, turn: usize) -> bool {
+        self.spawn_turn + HEIGHT <= turn
+    }
+
+    fn is_bottom(&self, turn: usize) -> bool {
+        self.spawn_turn + HEIGHT - 1 == turn
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EnemyState {
+    indices: [usize; WIDTH],
+    damages: [u32; WIDTH],
+}
+
+impl EnemyState {
+    fn new() -> Self {
+        Self {
+            indices: [0; WIDTH],
+            damages: [0; WIDTH],
+        }
+    }
+
+    fn has_enemy(&self, enemies: &EnemyCollection, column: usize) -> bool {
+        self.get(enemies, column).is_some()
+    }
+
+    fn get<'a>(&self, enemies: &'a EnemyCollection, column: usize) -> Option<&'a Enemy> {
+        enemies.get(column, self.indices[column])
+    }
+
+    fn crash(&self, enemies: &EnemyCollection, column: usize, turn: usize) -> bool {
+        if let Some(enemy) = enemies.get(column, self.indices[column]) {
+            enemy.is_bottom(turn)
+        } else {
+            false
+        }
+    }
+
+    fn damage(&mut self, enemies: &EnemyCollection, column: usize, attack: u32) -> (u32, u32) {
+        let enemy = enemies.get(column, self.indices[column]).unwrap();
+        self.damages[column] += attack;
+
+        if self.damages[column] >= enemy.hp {
+            self.damages[column] = 0;
+            self.indices[column] += 1;
+            (enemy.hp, enemy.power)
+        } else {
+            (0, 0)
+        }
+    }
+
+    fn clean_up_enemies(&mut self, enemies: &EnemyCollection, turn: usize) {
+        for (column, (index, damage)) in self
+            .indices
+            .iter_mut()
+            .zip(self.damages.iter_mut())
+            .enumerate()
+        {
+            if let Some(enemy) = enemies.get(column, *index) {
+                if enemy.is_out_of_range(turn) {
+                    *damage = 0;
+                    *index += 1;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EnemyCollection {
+    enemies: Vec<Vec<Enemy>>,
+}
+
+impl EnemyCollection {
+    fn new() -> Self {
+        Self {
+            enemies: vec![vec![]; WIDTH],
+        }
+    }
+
+    fn spawn(&mut self, enemies: &[(u32, u32, usize)], turn: usize) {
+        for &(hp, power, col) in enemies {
+            self.enemies[col].push(Enemy::new(hp, power, turn));
+        }
+    }
+
+    fn get(&self, column: usize, index: usize) -> Option<&Enemy> {
+        self.enemies[column].get(index)
     }
 }
 
 fn main() {
     let mut state = State::new();
+    let mut enemy_collection = EnemyCollection::new();
     let mut turn = 0;
 
     while let Some(enemies) = read_spawns() {
+        enemy_collection.spawn(&enemies, turn);
         let mut current_states = vec![None; WIDTH];
         current_states[state.column] = Some((state.clone(), C));
         let simulation_len = DEFAULT_SIMULATION_LEN.min(MAX_TURN - turn);
@@ -217,7 +273,7 @@ fn main() {
                 if let Some((state, first_dir)) = state {
                     for &dir in &[L, C, R] {
                         let mut state = state.clone();
-                        let is_alive = state.progress_turn(&enemies, dir);
+                        let is_alive = state.progress_turn(&enemy_collection, dir);
 
                         if !is_alive {
                             continue;
@@ -227,8 +283,8 @@ fn main() {
 
                         if next_states[next_col]
                             .as_ref()
-                            .map_or(std::f64::MIN, |s| s.0.score())
-                            < state.score()
+                            .map_or(std::f64::MIN, |s| s.0.score(&enemy_collection))
+                            < state.score(&enemy_collection)
                         {
                             let dir = if iter == 0 { dir } else { *first_dir };
                             next_states[next_col] = Some((state, dir));
@@ -245,7 +301,7 @@ fn main() {
 
         for s in current_states.iter() {
             if let Some((state, dir)) = s {
-                if best_score.change_max(state.score()) {
+                if best_score.change_max(state.score(&enemy_collection)) {
                     best_dir = *dir;
                 }
             }
@@ -258,7 +314,7 @@ fn main() {
         eprintln!("");
 
         write_direction(best_dir);
-        state.progress_turn(&enemies, best_dir);
+        state.progress_turn(&enemy_collection, best_dir);
         turn += 1;
 
         if turn == MAX_TURN {
