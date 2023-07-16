@@ -64,14 +64,14 @@ impl<T: PartialOrd> ChangeMinMax for T {
 }
 
 const MAX_TURN: usize = 1000;
-const DEFAULT_SIMULATION_LEN: usize = 15;
+const DEFAULT_SIMULATION_LEN: usize = 25;
 const HEIGHT: usize = 60;
 const WIDTH: usize = 25;
 const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 20;
+const BEAM_WIDTH: usize = 10;
 
 #[derive(Debug, Clone)]
 struct State {
