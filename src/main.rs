@@ -159,17 +159,24 @@ impl State {
     fn score(&self) -> f64 {
         let mut raw_score_point = self.raw_score as f64;
         let mut power_point = self.power as f64;
+        let cols = [
+            ((self.column + WIDTH - L) % WIDTH, 0.5),
+            (self.column, 1.0),
+            ((self.column + R) % WIDTH, 0.5),
+        ];
 
-        for enemies in self.enemies.iter() {
-            if let Some(enemy) = enemies.front() {
+        for &(col, coef) in &cols {
+            if let Some(enemy) = self.enemies[col].front() {
                 let ratio = (enemy.init_hp - enemy.hp) as f64 / enemy.init_hp as f64;
-                let ratio2 = ratio * ratio * 0.5;
-                raw_score_point += enemy.init_hp as f64 * ratio2;
-                power_point += enemy.power as f64 * ratio2;
+                let coef = coef * ratio * ratio * 0.5;
+                raw_score_point += enemy.init_hp as f64 * coef;
+                power_point += enemy.power as f64 * coef;
             }
         }
 
-        raw_score_point * self.turn as f64 + power_point * (MAX_TURN - self.turn) as f64
+        let raw_score_coef = self.turn as f64;
+        let power_point_coef = (MAX_TURN - self.turn) as f64;
+        raw_score_point * raw_score_coef + power_point * power_point_coef
     }
 }
 
