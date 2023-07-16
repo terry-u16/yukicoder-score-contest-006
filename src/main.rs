@@ -157,16 +157,19 @@ impl State {
     }
 
     fn score(&self) -> f64 {
-        let raw_score_point = self.raw_score as i64 * MAX_TURN as i64;
-        let power_point = self.power as i64 * (MAX_TURN - self.turn) as i64;
-        let mut partial_power_point = 0.0;
+        let mut raw_score_point = self.raw_score as f64;
+        let mut power_point = self.power as f64;
 
-        for enemy in self.enemies.iter().flatten() {
-            let ratio = (enemy.init_hp - enemy.hp) as f64 / enemy.init_hp as f64;
-            partial_power_point += enemy.power as f64 * ratio;
+        for enemies in self.enemies.iter() {
+            if let Some(enemy) = enemies.front() {
+                let ratio = (enemy.init_hp - enemy.hp) as f64 / enemy.init_hp as f64;
+                let ratio2 = ratio * ratio * 0.5;
+                raw_score_point += enemy.init_hp as f64 * ratio2;
+                power_point += enemy.power as f64 * ratio2;
+            }
         }
 
-        raw_score_point as f64 + power_point as f64 + partial_power_point
+        raw_score_point * self.turn as f64 + power_point * (MAX_TURN - self.turn) as f64
     }
 }
 
