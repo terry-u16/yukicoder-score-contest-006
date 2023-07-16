@@ -71,6 +71,7 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
+const BEAM_WIDTH: usize = 10;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -265,34 +266,42 @@ fn main() {
 
     while let Some(enemies) = read_spawns() {
         enemy_collection.spawn(&enemies, turn);
-        let mut current_states = vec![None; WIDTH];
-        current_states[state.column] = Some((state.clone(), C));
+        let mut all_states = vec![(state.clone(), C)];
+        let mut current_states = vec![vec![]; WIDTH];
+        current_states[state.column].push(0);
         let simulation_len = DEFAULT_SIMULATION_LEN.min(MAX_TURN - turn);
 
         for iter in 0..simulation_len {
-            let mut next_states: Vec<Option<(State, usize)>> = vec![None; WIDTH];
+            let mut next_states = vec![vec![]; WIDTH];
 
-            for state in current_states.iter() {
-                if let Some((state, first_dir)) = state {
-                    for &dir in &[L, C, R] {
-                        let mut state = state.clone();
-                        let is_alive = state.progress_turn(&enemy_collection, dir);
+            for &i in current_states.iter().flatten() {
+                for &dir in &[L, C, R] {
+                    let (state, first_dir) = &all_states[i];
+                    let mut state = state.clone();
+                    let is_alive = state.progress_turn(&enemy_collection, dir);
 
-                        if !is_alive {
-                            continue;
-                        }
-
-                        let next_col = state.column;
-
-                        if next_states[next_col]
-                            .as_ref()
-                            .map_or(std::f64::MIN, |s| s.0.score)
-                            < state.score
-                        {
-                            let dir = if iter == 0 { dir } else { *first_dir };
-                            next_states[next_col] = Some((state, dir));
-                        }
+                    if !is_alive {
+                        continue;
                     }
+
+                    let next_col = state.column;
+                    let dir = if iter == 0 { dir } else { *first_dir };
+
+                    next_states[next_col].push(all_states.len());
+                    all_states.push((state, dir));
+                }
+            }
+
+            for next in next_states.iter_mut() {
+                if next.len() > BEAM_WIDTH {
+                    next.select_nth_unstable_by(BEAM_WIDTH, |&i, &j| {
+                        all_states[j]
+                            .0
+                            .score
+                            .partial_cmp(&all_states[i].0.score)
+                            .unwrap()
+                    });
+                    next.truncate(BEAM_WIDTH);
                 }
             }
 
@@ -302,11 +311,9 @@ fn main() {
         let mut best_score = std::f64::MIN;
         let mut best_dir = C;
 
-        for s in current_states.iter() {
-            if let Some((state, dir)) = s {
-                if best_score.change_max(state.score) {
-                    best_dir = *dir;
-                }
+        for (state, dir) in current_states.iter().flatten().map(|&i| &all_states[i]) {
+            if best_score.change_max(state.score) {
+                best_dir = *dir;
             }
         }
 
