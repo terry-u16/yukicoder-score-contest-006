@@ -64,14 +64,15 @@ impl<T: PartialOrd> ChangeMinMax for T {
 }
 
 const MAX_TURN: usize = 1000;
-const DEFAULT_SIMULATION_LEN: usize = 30;
+const DEFAULT_SIMULATION_LEN: usize = 40;
 const HEIGHT: usize = 60;
 const WIDTH: usize = 25;
 const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 10;
+const BEAM_WIDTH: [usize; 8] = [20, 15, 10, 5, 5, 5, 3, 3];
+const BEAM_CHUNK: usize = 5;
 
 #[derive(Debug, Clone)]
 struct State {
@@ -294,6 +295,7 @@ fn main() {
 
         for iter in 0..simulation_len {
             let mut next_states = vec![vec![]; WIDTH];
+            let beam_width = BEAM_WIDTH[iter / BEAM_CHUNK];
 
             for &i in current_states.iter().flatten() {
                 all_states[i].0.clean_up(&enemy_collection);
@@ -316,15 +318,15 @@ fn main() {
             }
 
             for next in next_states.iter_mut() {
-                if next.len() > BEAM_WIDTH {
-                    next.select_nth_unstable_by(BEAM_WIDTH, |&i, &j| {
+                if next.len() > beam_width {
+                    next.select_nth_unstable_by(beam_width, |&i, &j| {
                         all_states[j]
                             .0
                             .score
                             .partial_cmp(&all_states[i].0.score)
                             .unwrap()
                     });
-                    next.truncate(BEAM_WIDTH);
+                    next.truncate(beam_width);
                 }
             }
 
