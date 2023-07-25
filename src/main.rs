@@ -1,6 +1,11 @@
 use std::{io::Write, time::Instant};
 
-use crate::beam_width_suggester::{BayesianBeamWidthSuggester, BeamWidthSuggester};
+use rand::Xoshiro256;
+
+use crate::{
+    beam_width_suggester::{BayesianBeamWidthSuggester, BeamWidthSuggester},
+    hash::NopHashSet,
+};
 
 macro_rules! get {
       ($t:ty) => {
@@ -73,7 +78,7 @@ const CENTER: usize = 12;
 const L: usize = !0;
 const C: usize = 0;
 const R: usize = 1;
-const BEAM_WIDTH: usize = 20;
+const BEAM_WIDTH: usize = 15;
 const TURN_STRIDE: usize = 2;
 
 #[derive(Debug, Clone)]
@@ -83,6 +88,7 @@ struct State {
     raw_score: u32,
     score: f64,
     turn: usize,
+    hash: u64,
     enemies: EnemyState,
 }
 
@@ -95,6 +101,7 @@ impl State {
             turn: 0,
             score: 0.0,
             enemies: EnemyState::new(),
+            hash: 0,
         }
     }
 
@@ -106,26 +113,34 @@ impl State {
         self.column = (self.column + direction + WIDTH) % WIDTH;
     }
 
-    fn attack(&mut self, enemy_collection: &EnemyCollection) {
+    fn attack(&mut self, enemy_collection: &EnemyCollection, hash: &ZobristHash) {
         let level = self.level();
 
         if self.enemies.has_enemy(enemy_collection, self.column) {
-            let (hp, power) = self.enemies.damage(enemy_collection, self.column, level);
+            let (hp, power) =
+                self.enemies
+                    .damage(enemy_collection, self.column, level, hash, &mut self.hash);
             self.raw_score += hp;
             self.power += power;
         }
     }
 
-    fn clean_up(&mut self, enemy_collection: &EnemyCollection) {
-        self.enemies.clean_up_enemies(enemy_collection, self.turn);
+    fn clean_up(&mut self, enemy_collection: &EnemyCollection, hash: &ZobristHash) {
+        self.enemies
+            .clean_up_enemies(enemy_collection, self.turn, hash, &mut self.hash);
     }
 
-    fn progress_turn(&mut self, enemy_collection: &EnemyCollection, direction: usize) -> bool {
+    fn progress_turn(
+        &mut self,
+        enemy_collection: &EnemyCollection,
+        hash: &ZobristHash,
+        direction: usize,
+    ) -> bool {
         let mut alive = true;
         alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
         self.move_player(direction);
         alive &= !self.enemies.crash(enemy_collection, self.column, self.turn);
-        self.attack(enemy_collection);
+        self.attack(enemy_collection, hash);
         self.turn += 1;
 
         self.update_score(enemy_collection);
@@ -217,9 +232,19 @@ impl EnemyState {
         }
     }
 
-    fn damage(&mut self, enemies: &EnemyCollection, column: usize, attack: u32) -> (u32, u32) {
+    fn damage(
+        &mut self,
+        enemies: &EnemyCollection,
+        column: usize,
+        attack: u32,
+        hashes: &ZobristHash,
+        hash: &mut u64,
+    ) -> (u32, u32) {
         let enemy = enemies.get(column, self.indices[column]).unwrap();
-        self.damages[column] += attack;
+        let damage = &mut self.damages[column];
+        *hash ^= hashes.get(enemy.spawn_turn, column, enemy.hp - *damage);
+        *damage += attack;
+        *hash ^= hashes.get(enemy.spawn_turn, column, enemy.hp.saturating_sub(*damage));
 
         if self.damages[column] >= enemy.hp {
             self.damages[column] = 0;
@@ -230,7 +255,13 @@ impl EnemyState {
         }
     }
 
-    fn clean_up_enemies(&mut self, enemies: &EnemyCollection, turn: usize) {
+    fn clean_up_enemies(
+        &mut self,
+        enemies: &EnemyCollection,
+        turn: usize,
+        hashes: &ZobristHash,
+        hash: &mut u64,
+    ) {
         let mut column = 0;
         let mut flag = enemies.clean_flags[turn];
 
@@ -244,6 +275,7 @@ impl EnemyState {
 
             if let Some(enemy) = enemies.get(column as usize, *index) {
                 if enemy.is_out_of_range(turn) {
+                    *hash ^= hashes.get(enemy.spawn_turn, column as usize, enemy.hp - *damage);
                     *damage = 0;
                     *index += 1;
                 }
@@ -269,11 +301,18 @@ impl EnemyCollection {
         }
     }
 
-    fn spawn(&mut self, enemies: &[(u32, u32, usize)], turn: usize) {
+    fn spawn(
+        &mut self,
+        enemies: &[(u32, u32, usize)],
+        hashes: &ZobristHash,
+        hash: &mut u64,
+        turn: usize,
+    ) {
         let mut flag = 0;
 
         for &(hp, power, col) in enemies {
             self.enemies[col].push(Enemy::new(hp, power, turn));
+            *hash ^= hashes.get(turn, col, hp);
             flag |= 1 << col;
         }
 
@@ -284,6 +323,39 @@ impl EnemyCollection {
 
     fn get(&self, column: usize, index: usize) -> Option<&Enemy> {
         self.enemies[column].get(index)
+    }
+}
+
+struct ZobristHash {
+    hashes: Vec<u64>,
+}
+
+impl ZobristHash {
+    const MAX_HP: usize = 500;
+
+    fn new() -> Self {
+        let mut hashes = vec![0; MAX_TURN * WIDTH * Self::MAX_HP];
+        let mut rng = Xoshiro256::new(42);
+
+        let mut index = 0;
+
+        for _ in 0..MAX_TURN {
+            for _ in 0..WIDTH {
+                // HP0のときはhashも0とする
+                index += 1;
+
+                for _ in 1..Self::MAX_HP {
+                    hashes[index] = rng.next();
+                    index += 1;
+                }
+            }
+        }
+
+        Self { hashes }
+    }
+
+    fn get(&self, turn: usize, col: usize, hp: u32) -> u64 {
+        self.hashes[(turn * WIDTH + col) * Self::MAX_HP + hp as usize]
     }
 }
 
@@ -298,28 +370,71 @@ fn main() {
         1.98,
         BEAM_WIDTH,
         1,
-        BEAM_WIDTH * 2,
-        100,
+        BEAM_WIDTH * 10,
+        50,
     );
+
+    let hash = ZobristHash::new();
+
+    // 助けてくれ
+    let mut hashset: [NopHashSet<u64>; WIDTH] = [
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+        NopHashSet::default(),
+    ];
+
+    let mut all_states = vec![];
+    let mut current_states = vec![vec![]; WIDTH];
 
     while let Some(enemies) = read_spawns() {
         let beam_width = width_suggester.suggest();
-        enemy_collection.spawn(&enemies, turn);
-        let mut all_states = vec![(state.clone(), [C; TURN_STRIDE])];
-        let mut current_states = vec![vec![]; WIDTH];
+        enemy_collection.spawn(&enemies, &hash, &mut state.hash, turn);
+        all_states.clear();
+        all_states.push((state.clone(), [C; TURN_STRIDE]));
+
+        for s in current_states.iter_mut() {
+            s.clear();
+        }
+
         current_states[state.column].push(0);
         let simulation_len = DEFAULT_SIMULATION_LEN.min(MAX_TURN - turn);
 
         for iter in 0..simulation_len {
             let mut next_states = vec![Vec::with_capacity(beam_width * 3); WIDTH];
 
+            for s in hashset.iter_mut() {
+                s.clear();
+            }
+
             for &i in current_states.iter().flatten() {
-                all_states[i].0.clean_up(&enemy_collection);
+                all_states[i].0.clean_up(&enemy_collection, &hash);
 
                 for &dir in &[L, C, R] {
                     let (state, directions) = &all_states[i];
                     let mut state = state.clone();
-                    let is_alive = state.progress_turn(&enemy_collection, dir);
+                    let is_alive = state.progress_turn(&enemy_collection, &hash, dir);
 
                     if !is_alive {
                         continue;
@@ -337,17 +452,17 @@ fn main() {
                 }
             }
 
-            for next in next_states.iter_mut() {
-                if next.len() > beam_width {
-                    next.select_nth_unstable_by(beam_width, |&i, &j| {
-                        all_states[j]
-                            .0
-                            .score
-                            .partial_cmp(&all_states[i].0.score)
-                            .unwrap()
-                    });
-                    next.truncate(beam_width);
-                }
+            for (next, hashset) in next_states.iter_mut().zip(hashset.iter_mut()) {
+                next.sort_unstable_by(|&i, &j| {
+                    all_states[j]
+                        .0
+                        .score
+                        .partial_cmp(&all_states[i].0.score)
+                        .unwrap()
+                });
+
+                next.retain(|&i| hashset.insert(all_states[i].0.hash));
+                next.truncate(beam_width);
             }
 
             current_states = next_states;
@@ -363,16 +478,16 @@ fn main() {
         }
 
         write_direction(best_dir[0]);
-        state.clean_up(&enemy_collection);
-        state.progress_turn(&enemy_collection, best_dir[0]);
+        state.clean_up(&enemy_collection, &hash);
+        state.progress_turn(&enemy_collection, &hash, best_dir[0]);
         turn += 1;
 
         for i in 1..TURN_STRIDE {
             if let Some(enemies) = read_spawns() {
-                enemy_collection.spawn(&enemies, turn);
+                enemy_collection.spawn(&enemies, &hash, &mut state.hash, turn);
                 write_direction(best_dir[i]);
-                state.clean_up(&enemy_collection);
-                state.progress_turn(&enemy_collection, best_dir[i]);
+                state.clean_up(&enemy_collection, &hash);
+                state.progress_turn(&enemy_collection, &hash, best_dir[i]);
                 turn += 1;
             }
         }
@@ -628,4 +743,100 @@ mod beam_width_suggester {
             beam_width
         }
     }
+}
+
+#[allow(dead_code)]
+mod rand {
+    pub(crate) struct Xoshiro256 {
+        s0: u64,
+        s1: u64,
+        s2: u64,
+        s3: u64,
+    }
+
+    impl Xoshiro256 {
+        pub(crate) fn new(mut seed: u64) -> Self {
+            let s0 = split_mix_64(&mut seed);
+            let s1 = split_mix_64(&mut seed);
+            let s2 = split_mix_64(&mut seed);
+            let s3 = split_mix_64(&mut seed);
+            Self { s0, s1, s2, s3 }
+        }
+
+        pub fn next(&mut self) -> u64 {
+            let result = (self.s1 * 5).rotate_left(7) * 9;
+            let t = self.s1 << 17;
+
+            self.s2 ^= self.s0;
+            self.s3 ^= self.s1;
+            self.s1 ^= self.s2;
+            self.s0 ^= self.s3;
+            self.s2 ^= t;
+            self.s3 = self.s3.rotate_left(45);
+
+            result
+        }
+
+        pub(crate) fn gen_usize(&mut self, lower: usize, upper: usize) -> usize {
+            assert!(lower < upper);
+            let count = upper - lower;
+            (self.next() % count as u64) as usize + lower
+        }
+
+        pub(crate) fn gen_i32(&mut self, lower: i32, upper: i32) -> i32 {
+            assert!(lower < upper);
+            let count = upper - lower;
+            (self.next() % count as u64) as i32 + lower
+        }
+
+        pub(crate) fn gen_f64(&mut self) -> f64 {
+            const UPPER_MASK: u64 = 0x3ff0000000000000;
+            const LOWER_MASK: u64 = 0xfffffffffffff;
+            let result = UPPER_MASK | (self.next() & LOWER_MASK);
+            let result: f64 = unsafe { std::mem::transmute(result) };
+            result - 1.0
+        }
+
+        pub(crate) fn gen_bool(&mut self, prob: f64) -> bool {
+            self.gen_f64() < prob
+        }
+    }
+
+    fn split_mix_64(x: &mut u64) -> u64 {
+        *x += 0x9e3779b97f4a7c15;
+        let mut z = *x;
+        z = (z ^ z >> 30) * 0xbf58476d1ce4e5b9;
+        z = (z ^ z >> 27) * 0x94d049bb133111eb;
+        return z ^ z >> 31;
+    }
+}
+
+#[allow(dead_code)]
+mod hash {
+    use core::hash::BuildHasherDefault;
+    use core::hash::Hasher;
+    use std::collections::{HashMap, HashSet};
+
+    #[derive(Default)]
+    pub struct NopHasher {
+        hash: u64,
+    }
+    impl Hasher for NopHasher {
+        fn write(&mut self, _: &[u8]) {
+            panic!();
+        }
+
+        #[inline]
+        fn write_u64(&mut self, n: u64) {
+            self.hash = n;
+        }
+
+        #[inline]
+        fn finish(&self) -> u64 {
+            self.hash
+        }
+    }
+
+    pub type NopHashMap<K, V> = HashMap<K, V, BuildHasherDefault<NopHasher>>;
+    pub type NopHashSet<V> = HashSet<V, BuildHasherDefault<NopHasher>>;
 }
